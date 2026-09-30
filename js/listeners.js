@@ -1,3 +1,4 @@
+window.__mr=window.__mr||{};window.__mr['listeners']=1;
 function setupEventListeners() {
     try {
         initCoreListeners();
