@@ -1,3 +1,4 @@
+window.__mr=window.__mr||{};window.__mr['group-chat']=1;
 window.switchStatsTab = function(tab) {
     var statsPanel = document.getElementById('stats-panel');
     var favoritesPanel = document.getElementById('favorites-panel');
@@ -75,7 +76,8 @@ window.reloadGroupChatSettings = async function() {
             return localforage.getItem(m.avatarRef).then(function(av) { m.avatar = av || null; }).catch(function() { m.avatar = null; });
         }));
     }
-    if (migratedFromLegacy) saveGroupChatSettings();
+    // 载入过程中不立刻存盘（此时消息可能还没读完），等启动完成后再落盘
+    if (migratedFromLegacy) setTimeout(function () { try { saveGroupChatSettings(); } catch (e) {} }, 6000);
     if (typeof updateGroupModeUI === 'function') updateGroupModeUI();
 };
 

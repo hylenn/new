@@ -1,3 +1,4 @@
+window.__mr=window.__mr||{};window.__mr['chatrooms']=1;
 /**
  * chatrooms.js - 多聊天室（单聊 / 群聊）
  *
