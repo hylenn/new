@@ -1,3 +1,4 @@
+window.__mr=window.__mr||{};window.__mr['onboarding']=1;
 (function() {
     var TI_AVATAR_KEY = 'tiSettings_showAvatar';
     var TI_TEXT_KEY = 'tiSettings_customText';

@@ -1,3 +1,4 @@
+window.__mr=window.__mr||{};window.__mr['app']=1;
 document.addEventListener('DOMContentLoaded', async () => {
     const loaderBar = document.getElementById('loader-tech-bar');
     const welcomeSubtitle = document.querySelector('.welcome-subtitle-scramble');
@@ -10,6 +11,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (loaderBar) loaderBar.style.width = width;
     };
 
+    window.__appBooted = true; // 主流程已开始跑，诊断面板不再需要出现
     const hideWelcomeScreen = () => {
         if (!welcomeScreen) return;
         welcomeScreen.classList.add('hidden');
