@@ -455,7 +455,23 @@ const loadData = async () => {
             localforage.getItem(getStorageKey('customPeriodCare')),
             localforage.getItem(getStorageKey('myStickerGroups'))
         ]);
-        const getVal = (index) => results[index].status === 'fulfilled' ? results[index].value : null;
+        // ── 自定义回复（字卡/拍一拍/状态/格言/开场/经期话术及其分组）：所有聊天室共用一份 ──
+        // 共用数据存在 shared_ 前缀的全局键里；房间自己的键继续写一份镜像（备份/云同步照旧能带上）。
+        const _SHARED_MAP = { 3: 'customReplies', 4: 'customPokes', 5: 'customStatuses', 6: 'customMottos', 7: 'customIntros', 18: 'customReplyGroups', 19: 'customPokeGroups', 20: 'customStatusGroups', 21: 'customPeriodCare' };
+        const _sharedVals = {};
+        for (const _nm of Object.values(_SHARED_MAP)) {
+            try { _sharedVals[_nm] = await localforage.getItem(APP_PREFIX + 'shared_' + _nm); } catch (e) { _sharedVals[_nm] = null; }
+        }
+        const getVal = (index) => {
+            const own = results[index].status === 'fulfilled' ? results[index].value : null;
+            const nm = _SHARED_MAP[index];
+            if (!nm) return own;
+            const sh = _sharedVals[nm];
+            if (sh === null || sh === undefined) return own;
+            // 共用库还是空的、但本房间以前有内容：先用本房间的（避免空数组把旧内容盖掉）
+            if (Array.isArray(sh) && sh.length === 0 && Array.isArray(own) && own.length > 0) return own;
+            return sh;
+        };
 
         const savedSettings = getVal(0);
         const savedMessages = getVal(1);
@@ -484,6 +500,11 @@ const loadData = async () => {
         if (savedPartnerPersonas) partnerPersonas = savedPartnerPersonas;
 
         if (savedSettings) Object.assign(settings, savedSettings);
+        try {
+            var _shSet = await localforage.getItem(APP_PREFIX + 'shared_settings');
+            if (_shSet && typeof _shSet === 'object') Object.assign(settings, _shSet);
+            window._snapSharedSettings();
+        } catch (e) { console.warn('[sharedSettings] 载入失败', e); }
         try { if (typeof window.reloadGroupChatSettings === 'function') await window.reloadGroupChatSettings(); } catch (e) { console.warn('群聊设置加载失败', e); }
 
         if (settings.showPartnerNameInChat !== undefined) {
@@ -548,6 +569,7 @@ const loadData = async () => {
         if (savedReplyGroups) window.customReplyGroups = savedReplyGroups;
         if (savedPokeGroups) window.customPokeGroups = savedPokeGroups;
         if (savedStatusGroups) window.customStatusGroups = savedStatusGroups;
+        try { window._snapShared(); } catch (e) {}
         if (savedAnniversaries) anniversaries = savedAnniversaries;
         if (savedStickers) stickerLibrary = savedStickers;
         if (savedMyStickers) myStickerLibrary = savedMyStickers;
@@ -778,7 +800,7 @@ window.deleteAnniversaryItem = function(id) {
 
 const _BACKUP_PREFIX = 'BACKUP_V1_';
 function _backupCriticalData() {
-    if (window._skipBackup) return;
+    if (window._skipBackup || window._skipSave) return;
     try {
         const backupPayload = {
             ts: Date.now(),
@@ -821,13 +843,18 @@ function _tryRecoverFromBackup() {
     try {
         const raw = localStorage.getItem(_BACKUP_PREFIX + 'critical');
         if (!raw) return null;
-        return JSON.parse(raw);
+        const parsed = JSON.parse(raw);
+        // 多聊天室：紧急备份只有一个槽位，只能用来恢复"它自己那个聊天室"，
+        // 否则新建/清空的聊天室会把别的聊天室的消息和设置"恢复"进来
+        if (parsed && parsed.sessionId && typeof SESSION_ID !== 'undefined' && SESSION_ID && parsed.sessionId !== SESSION_ID) return null;
+        return parsed;
     } catch (e) {
         return null;
     }
 }
 
 const saveData = async () => {
+    if (window._skipSave) return; // 正在恢复备份：不要用内存里的旧数据盖掉刚写入的
     if (!SESSION_ID) {
         console.warn('[saveData] SESSION_ID 尚未初始化，跳过保存以防数据写入临时 key');
         return;
@@ -835,17 +862,18 @@ const saveData = async () => {
 
     const promises = [
         { key: 'chatSettings',           val: () => localforage.setItem(getStorageKey('chatSettings'), settings) },
-        { key: 'customReplies',          val: () => localforage.setItem(getStorageKey('customReplies'), customReplies) },
-        { key: 'customReplyGroups',      val: () => localforage.setItem(getStorageKey('customReplyGroups'), window.customReplyGroups || []) },
-        { key: 'customPokeGroups',        val: () => localforage.setItem(getStorageKey('customPokeGroups'), window.customPokeGroups || []) },
-        { key: 'customStatusGroups',      val: () => localforage.setItem(getStorageKey('customStatusGroups'), window.customStatusGroups || []) },
+        { key: 'sharedSettings',         val: () => window._saveSharedSettings() },
+        { key: 'customReplies',          val: () => window._setSharedCustom('customReplies', customReplies) },
+        { key: 'customReplyGroups',      val: () => window._setSharedCustom('customReplyGroups', window.customReplyGroups || []) },
+        { key: 'customPokeGroups',        val: () => window._setSharedCustom('customPokeGroups', window.customPokeGroups || []) },
+        { key: 'customStatusGroups',      val: () => window._setSharedCustom('customStatusGroups', window.customStatusGroups || []) },
         { key: 'customEmojis',           val: () => localforage.setItem(getStorageKey('customEmojis'), customEmojis) },
         { key: 'anniversaries',          val: () => localforage.setItem(getStorageKey('anniversaries'), anniversaries) },
-        { key: 'customPokes',            val: () => localforage.setItem(getStorageKey('customPokes'), customPokes) },
-        { key: 'customStatuses',         val: () => localforage.setItem(getStorageKey('customStatuses'), customStatuses) },
-        { key: 'customMottos',           val: () => localforage.setItem(getStorageKey('customMottos'), customMottos) },
-        { key: 'customIntros',           val: () => localforage.setItem(getStorageKey('customIntros'), customIntros) },
-        { key: 'customPeriodCare',       val: () => localforage.setItem(getStorageKey('customPeriodCare'), customPeriodCare) },
+        { key: 'customPokes',            val: () => window._setSharedCustom('customPokes', customPokes) },
+        { key: 'customStatuses',         val: () => window._setSharedCustom('customStatuses', customStatuses) },
+        { key: 'customMottos',           val: () => window._setSharedCustom('customMottos', customMottos) },
+        { key: 'customIntros',           val: () => window._setSharedCustom('customIntros', customIntros) },
+        { key: 'customPeriodCare',       val: () => window._setSharedCustom('customPeriodCare', customPeriodCare) },
         { key: 'stickerLibrary',         val: () => localforage.setItem(getStorageKey('stickerLibrary'), stickerLibrary) },
         { key: 'myStickerLibrary',       val: () => localforage.setItem(getStorageKey('myStickerLibrary'), myStickerLibrary) },
         { key: 'myStickerGroups',        val: () => localforage.setItem(getStorageKey('myStickerGroups'), window.myStickerGroups || []) },
@@ -2852,7 +2880,9 @@ function showModal(modalElement, focusElement = null) {
                 console.error('[getStorageKey] SESSION_ID 尚未初始化，拒绝生成存储键:', baseKey);
                 throw new Error('SESSION_ID 未初始化，存储操作已中止');
             }
-            return `${APP_PREFIX}${SESSION_ID}_${baseKey}`;
+            // 聊天背景 / 背景图库：所有聊天室共用（属于外观设置）
+    if (baseKey === 'chatBackground' || baseKey === 'backgroundGallery') return `${APP_PREFIX}shared_${baseKey}`;
+    return `${APP_PREFIX}${SESSION_ID}_${baseKey}`;
         }
 
         // 阶段四：收藏语音键名（带 SESSION_ID 前缀，按梦角隔离）
@@ -2895,6 +2925,80 @@ function showModal(modalElement, focusElement = null) {
             }
         }
 
+// ── 共用设置：主题/字体/气泡/音效/回复节奏等所有聊天室一份；昵称/状态/头像形状与框/群成员各聊天室自己的 ──
+window._ROOM_ONLY_SETTING_KEYS = ['partnerName', 'myName', 'myStatus', 'partnerStatus', 'lastStatusChange', 'nextStatusChange',
+    'myAvatarShape', 'partnerAvatarShape', 'avatarCornerRadius', 'myAvatarFrame', 'partnerAvatarFrame', 'groupChat', 'showPartnerNameInChat'];
+window._pickSharedSettings = function (s) {
+    var out = {};
+    Object.keys(s || {}).forEach(function (k) { if (window._ROOM_ONLY_SETTING_KEYS.indexOf(k) < 0) out[k] = s[k]; });
+    return out;
+};
+window._snapSharedSettings = function () {
+    var picked = window._pickSharedSettings(settings), snap = {};
+    Object.keys(picked).forEach(function (k) { snap[k] = JSON.stringify(picked[k]); });
+    window.__sharedSetSnap = snap;
+};
+// 只写"自己改过的键"：读-改-写共用设置，避免久未操作的聊天室把别处刚改的盖掉
+window._saveSharedSettings = async function () {
+    try {
+        var picked = window._pickSharedSettings(settings), snap = window.__sharedSetSnap || {}, changed = {}, n = 0;
+        Object.keys(picked).forEach(function (k) { var j = JSON.stringify(picked[k]); if (snap[k] !== j) { changed[k] = picked[k]; n++; } });
+        if (!n) return;
+        var key = APP_PREFIX + 'shared_settings';
+        var cur = (await localforage.getItem(key)) || {};
+        Object.assign(cur, changed);
+        await localforage.setItem(key, cur);
+        Object.keys(changed).forEach(function (k) { snap[k] = JSON.stringify(changed[k]); });
+        window.__sharedSetSnap = snap;
+        try { if (window.parent !== window) window.parent.postMessage({ __cr: 1, type: 'shared-changed', id: SESSION_ID }, '*'); } catch (e) {}
+    } catch (e) { console.warn('[sharedSettings] 保存失败', e); }
+};
+
+// ── 共用自定义回复：读写辅助 ──
+window._sharedCustomGet = function () {
+    return {
+        customReplies: customReplies, customPokes: customPokes, customStatuses: customStatuses,
+        customMottos: customMottos, customIntros: customIntros, customPeriodCare: customPeriodCare,
+        customReplyGroups: window.customReplyGroups || [], customPokeGroups: window.customPokeGroups || [],
+        customStatusGroups: window.customStatusGroups || []
+    };
+};
+window._snapShared = function () {
+    var cur = window._sharedCustomGet();
+    window.__sharedSnap = window.__sharedSnap || {};
+    Object.keys(cur).forEach(function (k) { window.__sharedSnap[k] = JSON.stringify(cur[k]); });
+};
+// 只有内容真的变了才写共用键，避免一个久未操作的聊天室把别处刚改的内容盖掉
+window._setSharedCustom = function (nm, val) {
+    var p = localforage.setItem(getStorageKey(nm), val);
+    var snap = JSON.stringify(val);
+    window.__sharedSnap = window.__sharedSnap || {};
+    if (window.__sharedSnap[nm] === snap) return p;
+    window.__sharedSnap[nm] = snap;
+    return p.then(function () { return localforage.setItem(APP_PREFIX + 'shared_' + nm, val); });
+};
+// 切回某个聊天室时，重新读一遍共用库（别的聊天室可能刚改过）
+window._reloadSharedCustom = async function () {
+    var names = ['customReplies', 'customPokes', 'customStatuses', 'customMottos', 'customIntros', 'customPeriodCare', 'customReplyGroups', 'customPokeGroups', 'customStatusGroups'];
+    for (var i = 0; i < names.length; i++) {
+        var v = null;
+        try { v = await localforage.getItem(APP_PREFIX + 'shared_' + names[i]); } catch (e) {}
+        if (v === null || v === undefined) continue;
+        switch (names[i]) {
+            case 'customReplies': customReplies = v; break;
+            case 'customPokes': customPokes = v; break;
+            case 'customStatuses': customStatuses = v; break;
+            case 'customMottos': customMottos = v; break;
+            case 'customIntros': customIntros = v; break;
+            case 'customPeriodCare': customPeriodCare = v; break;
+            case 'customReplyGroups': window.customReplyGroups = v; break;
+            case 'customPokeGroups': window.customPokeGroups = v; break;
+            case 'customStatusGroups': window.customStatusGroups = v; break;
+        }
+    }
+    window._snapShared();
+};
+
 window.initializeSession = async function() {
     await migrateData();
 
@@ -2911,7 +3015,8 @@ window.initializeSession = async function() {
         SESSION_ID = await createNewSession(false);
     }
 
-    await localforage.setItem(`${APP_PREFIX}lastSessionId`, SESSION_ID);
+    // 首页「设置」专用页不算聊天室，不能把它记成"最近使用的聊天室"
+    if (SESSION_ID !== '__settings__') await localforage.setItem(`${APP_PREFIX}lastSessionId`, SESSION_ID);
 }
 
 // 监听系统昼夜变化，实时更新 data-theme

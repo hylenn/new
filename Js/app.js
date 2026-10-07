@@ -60,6 +60,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             safeAwait(initializeRandomUI?.()),
             safeAwait(initMusicPlayer?.())
         ]);
+        window.__roomBooted = true; // 聊天室页面数据与界面都准备好了（首页据此结束加载动画）
 
         setInterval(checkStatusChange, 60000);
 
