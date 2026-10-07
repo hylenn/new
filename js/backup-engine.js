@@ -1,3 +1,4 @@
+window.__mr=window.__mr||{};window.__mr['backup-engine']=3;
 /**
  * 统一备份/恢复：v5 默认 ZIP（结构 JSON + media/ 二进制），避免单文件巨型 JSON 无法解析；
  * v4 单文件 JSON 仍可导入。依赖：localforage、JSZip（CDN）、全局 APP_PREFIX / SESSION_ID。

@@ -1,4 +1,4 @@
-window.__mr=window.__mr||{};window.__mr['app']=1;
+window.__mr=window.__mr||{};window.__mr['app']=3;
 document.addEventListener('DOMContentLoaded', async () => {
     const loaderBar = document.getElementById('loader-tech-bar');
     const welcomeSubtitle = document.querySelector('.welcome-subtitle-scramble');

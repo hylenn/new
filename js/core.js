@@ -1,4 +1,4 @@
-window.__mr=window.__mr||{};window.__mr['core']=1;
+window.__mr=window.__mr||{};window.__mr['core']=3;
 /*核心应用逻辑：数据加载保存、消息渲染、会话管理等*/
 
 // 梦角回复消息的多监听通道（跟 window._onPartnerMessage 单函数钩子并行，互不覆盖）
