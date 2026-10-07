@@ -6,8 +6,12 @@
     /* 聊天室页：只作为首页(index.html)里的内嵌页使用。单独打开会自动回到首页。 */
     (function () {
         var embedded = location.search.indexOf('embed=1') > -1;
-        if (embedded) document.documentElement.classList.add('embed');
-        else if (location.search.indexOf('standalone=1') < 0) location.replace('index.html' + location.hash);
+        if (embedded) {
+            document.documentElement.classList.add('embed');
+            if (location.search.indexOf('settings=1') > -1) document.documentElement.classList.add('settings-only');
+        } else if (location.search.indexOf('standalone=1') < 0) {
+            location.replace('index.html' + location.hash);
+        }
     })();
     </script>
     <script>
@@ -119,6 +123,17 @@ html.embed #welcome-animation,
 html.embed #splash-declaration { display: none !important; }
 html.embed #session-manager-btn { display: flex !important; order: 0; }
 html.embed body { animation: none !important; opacity: 1 !important; }
+/* 内嵌页自己不滚动：避免 iOS 键盘/自动滚动把整个聊天室(连同顶栏)推出可视区 */
+html.embed, html.embed body { height: 100%; overflow: hidden; overscroll-behavior: none; }
+/* 首页「设置」：只显示全聊天室共用的那部分 */
+#replies-entry { display: none !important; }
+html.settings-only #replies-entry { display: flex !important; }
+html.settings-only .header, html.settings-only .main-chat-area, html.settings-only .input-area-wrapper,
+html.settings-only #typing-indicator-wrapper, html.settings-only #immersive-exit-btn { visibility: hidden !important; }
+html.settings-only #daily-greeting-modal, html.settings-only #tour-overlay, html.settings-only #disclaimer-modal { display: none !important; }
+html.settings-only #advanced-settings, html.settings-only #data-settings, html.settings-only #groupchat-entry { display: none !important; }
+html.settings-only [data-panel="cs-panel-names"], html.settings-only #cs-panel-names { display: none !important; }
+html.settings-only #appearance-nav-grid .settings-card[onclick*="'avatar'"] { display: none !important; }
 </style>
 </head>
 <body>
@@ -1329,7 +1344,10 @@ html.embed body { animation: none !important; opacity: 1 !important; }
                     <i class="fas fa-users"></i>
                     <span>群成员管理</span>
                 </div>
-            </div>
+                <div class="settings-card" id="replies-entry" onclick="(function(){hideModal(document.getElementById('settings-modal'));showModal(document.getElementById('custom-replies-modal'));})()">
+                    <i class="fas fa-comment-dots"></i>
+                    <span>自定义回复</span>
+                </div>
             </div>
 
 

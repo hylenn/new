@@ -19,7 +19,10 @@
     <link rel="stylesheet" href="css/styles.css">
     <style>
 /* ══════ 首页：聊天列表（沿用主题变量：颜色/字体跟随你的设置，不新增画风） ══════ */
-#rooms-app { position: fixed; inset: 0; overflow: hidden; }
+html, body { height: 100%; margin: 0; overflow: hidden; overscroll-behavior: none; }
+body { position: fixed; inset: 0; width: 100%; }
+#rooms-app { position: fixed; inset: 0; overflow: hidden; overflow: clip; }
+.rp-top-actions { display: flex; gap: 10px; }
 #rooms-page {
     position: absolute; inset: 0; display: flex; flex-direction: column;
     background: var(--primary-bg); color: var(--text-primary);
@@ -264,7 +267,7 @@
     <div id="rooms-page">
         <div class="rp-top">
             <div class="rp-title">传讯</div>
-            <button class="rp-icon-btn" id="rp-add" title="新建聊天"><i class="fas fa-plus"></i></button>
+            <div class="rp-top-actions"><button class="rp-icon-btn" id="rp-settings" title="设置"><i class="fas fa-cog"></i></button><button class="rp-icon-btn" id="rp-add" title="新建聊天"><i class="fas fa-plus"></i></button></div>
         </div>
         <div id="rp-list"></div>
         <div id="rp-empty"><i class="fas fa-comment-dots" style="font-size:36px;opacity:.5;color:var(--accent-color);"></i><div>还没有聊天</div><div style="font-size:12px;opacity:.7;">点右上角 + 新建一个</div></div>
@@ -304,6 +307,9 @@
     var APP = 'CHAT_APP_V3_';
     var K = { list: APP + 'sessionList', last: APP + 'lastSessionId' };
     var MAX_FRAMES = 4;
+    var SETTINGS_ID = '__settings__';
+    // 只属于某个聊天室的设置键（其余设置全聊天室共用，存在 shared_settings 里）
+    var ROOM_ONLY = ['partnerName', 'myName', 'myStatus', 'partnerStatus', 'lastStatusChange', 'nextStatusChange', 'myAvatarShape', 'partnerAvatarShape', 'avatarCornerRadius', 'myAvatarFrame', 'partnerAvatarFrame', 'groupChat', 'showPartnerNameInChat'];
     var frames = {};          // id -> { el, ready, t }
     var activeId = null;
     var listCache = [];
@@ -321,6 +327,8 @@
         try {
             var last = await lf.getItem(K.last);
             var s = (last && await lf.getItem(APP + last + '_chatSettings')) || {};
+            var sh = await lf.getItem(APP + 'shared_settings');
+            if (sh && typeof sh === 'object') s = Object.assign({}, s, sh);
             var root = document.documentElement;
             appliedVars.forEach(function (v) { root.style.removeProperty(v); });
             appliedVars = [];
@@ -372,7 +380,7 @@
     }
     async function renderList() {
         listCache = await readList();
-        var items = listCache.slice().sort(function (a, b) { return (b.lastTime || b.createdAt || 0) - (a.lastTime || a.createdAt || 0); });
+        var items = listCache.filter(function (x) { return !x.hidden; }).sort(function (a, b) { return (b.lastTime || b.createdAt || 0) - (a.lastTime || a.createdAt || 0); });
         $('rp-empty').style.display = items.length ? 'none' : 'flex';
         var html = '';
         for (var i = 0; i < items.length; i++) {
@@ -401,7 +409,7 @@
         el.className = 'room-frame';
         el.setAttribute('data-id', id);
         el.setAttribute('allow', 'autoplay; clipboard-write; microphone');
-        el.src = 'app.html?embed=1#' + encodeURIComponent(id);
+        el.src = 'app.html?embed=1' + (id === SETTINGS_ID ? '&settings=1' : '') + '#' + encodeURIComponent(id);
         $('rooms-stage').insertBefore(el, $('rooms-loading'));
         frames[id] = { el: el, ready: false, t: Date.now() };
         return frames[id];
@@ -430,10 +438,11 @@
         if (prev && prev !== id) post(prev, false);
         activeId = id;
         openingId = id;
+        if (frames[id] && frames[id].stale) await destroyFrame(id); // 别处改过共用设置：重新载入这一页
         var f = frames[id] || makeFrame(id);
         f.t = Date.now();
         setActive(id);
-        try { await lf.setItem(K.last, id); } catch (e) {}
+        if (id !== SETTINGS_ID) { try { await lf.setItem(K.last, id); } catch (e) {} }
         $('rooms-loading-text').textContent = '正在进入 ' + s.name + '…';
         $('rooms-loading').classList.toggle('show', !f.ready);
         $('rooms-stage').classList.add('open');
@@ -471,6 +480,10 @@
             if (f) f.ready = true;
             if (openingId === d.id) { $('rooms-loading').classList.remove('show'); if (activeId === d.id) post(d.id, true); }
         } else if (d.type === 'room-meta') renderList();
+        else if (d.type === 'shared-changed') {
+            Object.keys(frames).forEach(function (k) { if (k !== d.id) frames[k].stale = true; });
+            applyTheme();
+        } else if (d.type === 'unscroll') resetShellScroll();
     });
 
     /* ───────── 新建 ───────── */
@@ -492,15 +505,8 @@
         var nm = (name || '').trim() || (type === 'group' ? '群聊 ' + n : '梦角 ' + n);
         var id = Date.now().toString(36) + Math.random().toString(36).slice(2, 9);
         list.push({ id: id, name: nm, createdAt: Date.now(), type: type, lastText: '', lastTime: 0, unread: 0, readAt: Date.now() });
-        // 外观沿用最近使用的聊天室（新聊天室看起来和原来的一样）
+        // 外观/字体/音效等是全聊天室共用的，新聊天室自动沿用，不用复制
         var st = { partnerName: nm };
-        try {
-            var last = await lf.getItem(K.last);
-            var ls = last ? await lf.getItem(APP + last + '_chatSettings') : null;
-            if (ls) APPEARANCE_KEYS.forEach(function (k) { if (ls[k] !== undefined) st[k] = ls[k]; });
-            var bg = last ? await lf.getItem(APP + last + '_chatBackground') : null;
-            if (bg) await lf.setItem(APP + id + '_chatBackground', bg);
-        } catch (e) {}
         if (type === 'group') {
             st.groupChat = { enabled: true, showAvatar: true, showName: true, members: [
                 { id: 'gcm_' + id + '_a', name: '成员A', avatarRef: APP + id + '_gca_a' },
@@ -612,15 +618,72 @@
         } catch (e) { console.warn('旧数据迁移失败', e); }
     }
 
+    function pickShared(s) { var o = {}; Object.keys(s || {}).forEach(function (k) { if (ROOM_ONLY.indexOf(k) < 0) o[k] = s[k]; }); return o; }
+    // 第一次升级：用最近使用的聊天室的外观/音效等当作"共用设置"
+    async function seedShared() {
+        try {
+            var last = await lf.getItem(K.last);
+            var list = await readList();
+            var src = last && list.some(function (x) { return x.id === last; }) ? last : (list[0] && list[0].id);
+            if (!src) return;
+            if (!(await lf.getItem(APP + 'shared_settings'))) {
+                var st = await lf.getItem(APP + src + '_chatSettings');
+                if (st) await lf.setItem(APP + 'shared_settings', pickShared(st));
+            }
+            var names = ['chatBackground', 'backgroundGallery'];
+            for (var i = 0; i < names.length; i++) {
+                if ((await lf.getItem(APP + 'shared_' + names[i])) == null) {
+                    var v = await lf.getItem(APP + src + '_' + names[i]);
+                    if (v != null) await lf.setItem(APP + 'shared_' + names[i], v);
+                }
+            }
+        } catch (e) { console.warn('共用设置初始化失败', e); }
+    }
+    // 列表名字和聊天室里"头像上方的名字"统一：以各聊天室自己的昵称设置为准
+    async function reconcileNames() {
+        try {
+            var list = await readList(), changed = false;
+            for (var i = 0; i < list.length; i++) {
+                var r = list[i];
+                if (r.hidden) continue;
+                var st = await lf.getItem(APP + r.id + '_chatSettings');
+                var nm = st && st.partnerName ? String(st.partnerName).trim() : '';
+                if (nm && nm !== r.name) { r.name = nm; changed = true; }
+            }
+            if (changed) await lf.setItem(K.list, list);
+        } catch (e) {}
+    }
+    // 首页「设置」：用一个隐藏的专用页面显示全聊天室共用的设置
+    async function openSettings() {
+        var list = await readList();
+        if (!list.some(function (x) { return x.id === SETTINGS_ID; })) {
+            list.push({ id: SETTINGS_ID, name: '设置', hidden: true, createdAt: Date.now(), type: 'single', lastText: '', lastTime: 0, unread: 0 });
+            await lf.setItem(K.list, list);
+            await lf.setItem(APP + SETTINGS_ID + '_chatSettings', { partnerName: '设置' });
+        }
+        listCache = list;
+        openRoom(SETTINGS_ID);
+    }
+    function resetShellScroll() {
+        window.scrollTo(0, 0);
+        ['rooms-app', 'rooms-page', 'rooms-stage'].forEach(function (id) { var e = $(id); if (e) { e.scrollTop = 0; e.scrollLeft = 0; } });
+    }
+    window.addEventListener('scroll', resetShellScroll, { passive: true });
+    if (window.visualViewport) { window.visualViewport.addEventListener('scroll', resetShellScroll); window.visualViewport.addEventListener('resize', resetShellScroll); }
+    ['rooms-app', 'rooms-page', 'rooms-stage'].forEach(function (id) { var e = $(id); if (e) e.addEventListener('scroll', resetShellScroll, { passive: true }); });
+
     async function boot() {
         if (!lf) { $('rp-empty').style.display = 'flex'; $('rp-empty').querySelector('div').textContent = '存储组件没有载入，请检查网络后刷新'; return; }
         bind();
+        $('rp-settings').addEventListener('click', openSettings);
         await migrateLegacy();
         var list = await readList();
         if (!list.length) {
             var id = await createRoom('single', '我的梦角');
             await lf.setItem(K.last, id);
         }
+        await seedShared();
+        await reconcileNames();
         await applyTheme();
         await renderList();
     }
