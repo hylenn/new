@@ -1,4 +1,4 @@
-window.__mr=window.__mr||{};window.__mr['group-chat']=1;
+window.__mr=window.__mr||{};window.__mr['group-chat']=3;
 window.switchStatsTab = function(tab) {
     var statsPanel = document.getElementById('stats-panel');
     var favoritesPanel = document.getElementById('favorites-panel');

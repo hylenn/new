@@ -1,4 +1,4 @@
-window.__mr=window.__mr||{};window.__mr['chatrooms']=1;
+window.__mr=window.__mr||{};window.__mr['chatrooms']=3;
 /**
  * chatrooms.js - 聊天室页（app.html，内嵌在首页 index.html 的 iframe 里）
  *
@@ -179,7 +179,7 @@ window.__mr=window.__mr||{};window.__mr['chatrooms']=1;
                 if (g) g.style.display = (window.groupChatSettings && window.groupChatSettings.enabled) ? '' : 'none';
                 window._updateRoomMeta();
             }
-            post('room-ready');
+            post('room-ready', { versions: window.__mr || {} });
         }
     }, 250);
     if (!SETTINGS_ONLY) setInterval(function () { if (window.__roomBooted) window._updateRoomMeta(); }, 5000);
