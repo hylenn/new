@@ -269,6 +269,7 @@ body { position: fixed; inset: 0; width: 100%; }
             <div class="rp-title">传讯</div>
             <div class="rp-top-actions"><button class="rp-icon-btn" id="rp-settings" title="设置"><i class="fas fa-cog"></i></button><button class="rp-icon-btn" id="rp-add" title="新建聊天"><i class="fas fa-plus"></i></button></div>
         </div>
+        <div id="rp-ver-warn" style="display:none;margin:0 14px 8px;padding:10px 12px;border-radius:12px;background:rgba(229,72,77,.12);color:#e5484d;font-size:12px;line-height:1.7;"></div>
         <div id="rp-list"></div>
         <div id="rp-empty"><i class="fas fa-comment-dots" style="font-size:36px;opacity:.5;color:var(--accent-color);"></i><div>还没有聊天</div><div style="font-size:12px;opacity:.7;">点右上角 + 新建一个</div></div>
     </div>
@@ -319,6 +320,15 @@ body { position: fixed; inset: 0; width: 100%; }
     function $(id) { return document.getElementById(id); }
     function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
     var lf = window.localforage;
+    // 必须和聊天室页面(js/utils.js)用同一个数据库配置，否则首页读到的是另一个空库：
+    // 列表里的聊天室在真正的库里不存在，点进去就会退回"最近使用的聊天室"，所有聊天室看起来都是同一份记录
+    try {
+        if (lf && lf.config) lf.config({
+            driver: [lf.INDEXEDDB, lf.WEBSQL, lf.LOCALSTORAGE],
+            name: 'ChatApp_V3', version: 1.0, storeName: 'chat_data',
+            description: 'Storage for Chat App V3'
+        });
+    } catch (e) { console.warn('数据库配置失败', e); }
 
     /* ───────── 主题：沿用最近使用的聊天室的外观设置 ───────── */
     var appliedVars = [];
@@ -478,8 +488,10 @@ body { position: fixed; inset: 0; width: 100%; }
         else if (d.type === 'room-ready') {
             var f = frames[d.id];
             if (f) f.ready = true;
+            checkVersions(d.versions || {});
             if (openingId === d.id) { $('rooms-loading').classList.remove('show'); if (activeId === d.id) post(d.id, true); }
         } else if (d.type === 'room-meta') renderList();
+        else if (d.type === 'room-ready-versions') {}
         else if (d.type === 'shared-changed') {
             Object.keys(frames).forEach(function (k) { if (k !== d.id) frames[k].stale = true; });
             applyTheme();
@@ -514,6 +526,7 @@ body { position: fixed; inset: 0; width: 100%; }
             ] };
         }
         await lf.setItem(APP + id + '_chatSettings', st);
+        await lf.setItem(APP + id + '_chatMessages', []); // 明确的空记录：新聊天室绝不会去"恢复"别的聊天室的内容
         await lf.setItem(K.list, list);
         return id;
     }
@@ -660,9 +673,19 @@ body { position: fixed; inset: 0; width: 100%; }
             list.push({ id: SETTINGS_ID, name: '设置', hidden: true, createdAt: Date.now(), type: 'single', lastText: '', lastTime: 0, unread: 0 });
             await lf.setItem(K.list, list);
             await lf.setItem(APP + SETTINGS_ID + '_chatSettings', { partnerName: '设置' });
+            await lf.setItem(APP + SETTINGS_ID + '_chatMessages', []);
         }
         listCache = list;
         openRoom(SETTINGS_ID);
+    }
+    var NEED = { 'core': 3, 'app': 3, 'onboarding': 3, 'listeners': 3, 'group-chat': 3, 'chatrooms': 3, 'backup-engine': 3, 'app-html': 3 };
+    var FILE = { 'core': 'js/core.js', 'app': 'js/app.js', 'onboarding': 'js/onboarding.js', 'listeners': 'js/listeners.js', 'group-chat': 'js/features/group-chat.js', 'chatrooms': 'js/features/chatrooms.js', 'backup-engine': 'js/backup-engine.js', 'app-html': 'app.html' };
+    function checkVersions(v) {
+        var old = Object.keys(NEED).filter(function (k) { return !(v && v[k] >= NEED[k]); });
+        var box = $('rp-ver-warn');
+        if (!old.length) { box.style.display = 'none'; return; }
+        box.innerHTML = '<b>有文件不是最新版</b>（可能没传对位置，或浏览器缓存了旧的）：<br>' + old.map(function (k) { return FILE[k]; }).join('<br>') + '<br>请重新上传这些文件，并在浏览器里强制刷新。旧文件会让新聊天室串到别的聊天室的记录。';
+        box.style.display = 'block';
     }
     function resetShellScroll() {
         window.scrollTo(0, 0);
