@@ -500,6 +500,11 @@ const loadData = async () => {
         if (savedPartnerPersonas) partnerPersonas = savedPartnerPersonas;
 
         if (savedSettings) Object.assign(settings, savedSettings);
+        try {
+            var _shSet = await localforage.getItem(APP_PREFIX + 'shared_settings');
+            if (_shSet && typeof _shSet === 'object') Object.assign(settings, _shSet);
+            window._snapSharedSettings();
+        } catch (e) { console.warn('[sharedSettings] 载入失败', e); }
         try { if (typeof window.reloadGroupChatSettings === 'function') await window.reloadGroupChatSettings(); } catch (e) { console.warn('群聊设置加载失败', e); }
 
         if (settings.showPartnerNameInChat !== undefined) {
@@ -795,7 +800,7 @@ window.deleteAnniversaryItem = function(id) {
 
 const _BACKUP_PREFIX = 'BACKUP_V1_';
 function _backupCriticalData() {
-    if (window._skipBackup) return;
+    if (window._skipBackup || window._skipSave) return;
     try {
         const backupPayload = {
             ts: Date.now(),
@@ -849,6 +854,7 @@ function _tryRecoverFromBackup() {
 }
 
 const saveData = async () => {
+    if (window._skipSave) return; // 正在恢复备份：不要用内存里的旧数据盖掉刚写入的
     if (!SESSION_ID) {
         console.warn('[saveData] SESSION_ID 尚未初始化，跳过保存以防数据写入临时 key');
         return;
@@ -856,6 +862,7 @@ const saveData = async () => {
 
     const promises = [
         { key: 'chatSettings',           val: () => localforage.setItem(getStorageKey('chatSettings'), settings) },
+        { key: 'sharedSettings',         val: () => window._saveSharedSettings() },
         { key: 'customReplies',          val: () => window._setSharedCustom('customReplies', customReplies) },
         { key: 'customReplyGroups',      val: () => window._setSharedCustom('customReplyGroups', window.customReplyGroups || []) },
         { key: 'customPokeGroups',        val: () => window._setSharedCustom('customPokeGroups', window.customPokeGroups || []) },
@@ -2873,7 +2880,9 @@ function showModal(modalElement, focusElement = null) {
                 console.error('[getStorageKey] SESSION_ID 尚未初始化，拒绝生成存储键:', baseKey);
                 throw new Error('SESSION_ID 未初始化，存储操作已中止');
             }
-            return `${APP_PREFIX}${SESSION_ID}_${baseKey}`;
+            // 聊天背景 / 背景图库：所有聊天室共用（属于外观设置）
+    if (baseKey === 'chatBackground' || baseKey === 'backgroundGallery') return `${APP_PREFIX}shared_${baseKey}`;
+    return `${APP_PREFIX}${SESSION_ID}_${baseKey}`;
         }
 
         // 阶段四：收藏语音键名（带 SESSION_ID 前缀，按梦角隔离）
@@ -2915,6 +2924,35 @@ function showModal(modalElement, focusElement = null) {
                 showNotification('数据迁移失败，部分旧数据可能丢失', 'error');
             }
         }
+
+// ── 共用设置：主题/字体/气泡/音效/回复节奏等所有聊天室一份；昵称/状态/头像形状与框/群成员各聊天室自己的 ──
+window._ROOM_ONLY_SETTING_KEYS = ['partnerName', 'myName', 'myStatus', 'partnerStatus', 'lastStatusChange', 'nextStatusChange',
+    'myAvatarShape', 'partnerAvatarShape', 'avatarCornerRadius', 'myAvatarFrame', 'partnerAvatarFrame', 'groupChat', 'showPartnerNameInChat'];
+window._pickSharedSettings = function (s) {
+    var out = {};
+    Object.keys(s || {}).forEach(function (k) { if (window._ROOM_ONLY_SETTING_KEYS.indexOf(k) < 0) out[k] = s[k]; });
+    return out;
+};
+window._snapSharedSettings = function () {
+    var picked = window._pickSharedSettings(settings), snap = {};
+    Object.keys(picked).forEach(function (k) { snap[k] = JSON.stringify(picked[k]); });
+    window.__sharedSetSnap = snap;
+};
+// 只写"自己改过的键"：读-改-写共用设置，避免久未操作的聊天室把别处刚改的盖掉
+window._saveSharedSettings = async function () {
+    try {
+        var picked = window._pickSharedSettings(settings), snap = window.__sharedSetSnap || {}, changed = {}, n = 0;
+        Object.keys(picked).forEach(function (k) { var j = JSON.stringify(picked[k]); if (snap[k] !== j) { changed[k] = picked[k]; n++; } });
+        if (!n) return;
+        var key = APP_PREFIX + 'shared_settings';
+        var cur = (await localforage.getItem(key)) || {};
+        Object.assign(cur, changed);
+        await localforage.setItem(key, cur);
+        Object.keys(changed).forEach(function (k) { snap[k] = JSON.stringify(changed[k]); });
+        window.__sharedSetSnap = snap;
+        try { if (window.parent !== window) window.parent.postMessage({ __cr: 1, type: 'shared-changed', id: SESSION_ID }, '*'); } catch (e) {}
+    } catch (e) { console.warn('[sharedSettings] 保存失败', e); }
+};
 
 // ── 共用自定义回复：读写辅助 ──
 window._sharedCustomGet = function () {
@@ -2977,7 +3015,8 @@ window.initializeSession = async function() {
         SESSION_ID = await createNewSession(false);
     }
 
-    await localforage.setItem(`${APP_PREFIX}lastSessionId`, SESSION_ID);
+    // 首页「设置」专用页不算聊天室，不能把它记成"最近使用的聊天室"
+    if (SESSION_ID !== '__settings__') await localforage.setItem(`${APP_PREFIX}lastSessionId`, SESSION_ID);
 }
 
 // 监听系统昼夜变化，实时更新 data-theme

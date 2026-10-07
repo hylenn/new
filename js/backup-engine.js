@@ -489,6 +489,12 @@
             lsRaw = filterLsByCategories(lsRaw, opt.selectedCategoryIds, opt.categories);
         }
 
+        // 多聊天室：恢复只会写进"当前这个聊天室"。绝不能覆盖聊天室清单 / 最近使用 / 紧急备份，
+        // 也要拦住内存里的旧数据在恢复期间被自动存档盖回去（页面会在恢复后重新载入）
+        window._skipSave = true;
+        var _protect = [(typeof APP_PREFIX !== 'undefined' ? APP_PREFIX : 'CHAT_APP_V3_') + 'sessionList', (typeof APP_PREFIX !== 'undefined' ? APP_PREFIX : 'CHAT_APP_V3_') + 'lastSessionId'];
+        Object.keys(lfRaw).forEach(function (k) { if (_protect.indexOf(k) > -1) delete lfRaw[k]; });
+        Object.keys(lsRaw).forEach(function (k) { if (k.indexOf('BACKUP_V1_critical') > -1 || _protect.indexOf(k) > -1) delete lsRaw[k]; });
         var lfKeys = Object.keys(lfRaw);
         var backupSid = data.sessionId || inferBackupSessionId(lfKeys, data.appPrefix);
         var curSid = typeof SESSION_ID !== 'undefined' ? SESSION_ID : null;
@@ -518,29 +524,7 @@
             }
         }
 
-        // 修复 sessionList 中的会话 ID：键已被 remap，但值里的 id 字段还是旧 sessionId
-        if (needRemap) {
-            try {
-                var slKey = appPfx + 'sessionList';
-                var sl = await localforage.getItem(slKey);
-                if (Array.isArray(sl)) {
-                    var remappedSl = sl.map(function(s) {
-                        if (s && s.id === backupSid) {
-                            var copy = {};
-                            for (var p in s) { if (Object.prototype.hasOwnProperty.call(s, p)) copy[p] = s[p]; }
-                            copy.id = curSid;
-                            return copy;
-                        }
-                        return s;
-                    });
-                    await localforage.setItem(slKey, remappedSl);
-                }
-            } catch (e4) {}
-        }
-
-        if (typeof APP_PREFIX !== 'undefined' && typeof SESSION_ID !== 'undefined') {
-            try { await localforage.setItem(APP_PREFIX + 'lastSessionId', SESSION_ID); } catch (e3) {}
-        }
+        // 聊天室清单不动（见上），无需修正其中的会话 ID
     }
 
     function isFullBackupShape(d) {
