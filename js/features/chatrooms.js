@@ -1,4 +1,4 @@
-window.__mr=window.__mr||{};window.__mr['chatrooms']=3;
+window.__mr=window.__mr||{};window.__mr['chatrooms']=4;
 /**
  * chatrooms.js - 聊天室页（app.html，内嵌在首页 index.html 的 iframe 里）
  *
@@ -81,19 +81,36 @@ window.__mr=window.__mr||{};window.__mr['chatrooms']=3;
         });
     };
 
-    function anyModalOpen() {
-        var ms = document.querySelectorAll('.modal');
-        for (var i = 0; i < ms.length; i++) {
-            if (getComputedStyle(ms[i]).display !== 'none') return true;
-        }
-        // 陪伴相关的弹窗是用 .active 控制显示的（平时 display:flex 但透明不可点）
-        if (document.querySelector('.companion-modal.active')) return true;
-        return false;
+    function visibleModalIds() {
+        var out = [];
+        document.querySelectorAll('.modal').forEach(function (m) { if (getComputedStyle(m).display !== 'none') out.push(m.id || '(no-id)'); });
+        if (document.querySelector('.companion-modal.active')) out.push('(companion)');
+        return out;
     }
+    var _baseline = [];
+    function anyModalOpen() {
+        return visibleModalIds().some(function (id) { return _baseline.indexOf(id) < 0; });
+    }
+    var _opening = false, _opened = false;
+    // 首页「设置」：不依赖启动是否完全结束，也不会被别的弹窗挡住；打不开会一直重试
     function openSettingsModal() {
-        if (!window.__roomBooted || anyModalOpen()) return;
-        var m = document.getElementById('settings-modal');
-        if (m && typeof showModal === 'function') showModal(m);
+        if (_opened || _opening) return;
+        _opening = true;
+        var n = 0;
+        var t = setInterval(function () {
+            n++;
+            var m = document.getElementById('settings-modal');
+            if (m && typeof showModal === 'function') {
+                if (!_baseline.length) _baseline = visibleModalIds().filter(function (id) { return id !== 'settings-modal'; });
+                try { showModal(m); } catch (e) { m.style.display = 'flex'; m.classList.add('active'); }
+                if (getComputedStyle(m).display !== 'none') {
+                    clearInterval(t); _opening = false; _opened = true;
+                    post('settings-opened');
+                    return;
+                }
+            }
+            if (n > 60) { clearInterval(t); _opening = false; post('settings-failed', { reason: m ? 'showModal 没能显示窗口' : '找不到设置窗口' }); }
+        }, 250);
     }
 
     // ── 首页 → 聊天室 ──
@@ -116,7 +133,7 @@ window.__mr=window.__mr||{};window.__mr['chatrooms']=3;
 
     if (!EMBED) return;
 
-    // ── 内嵌页不滚动 ──
+    // ── 内嵌页自己不滚动（键盘避让由首页按"可视区域"缩放整个聊天室来完成，这里不去干预）──
     function lockScroll() {
         if (window.scrollY || window.scrollX) window.scrollTo(0, 0);
         var se = document.scrollingElement;
@@ -124,12 +141,6 @@ window.__mr=window.__mr||{};window.__mr['chatrooms']=3;
         if (document.body.scrollTop) document.body.scrollTop = 0;
     }
     window.addEventListener('scroll', lockScroll, { passive: true });
-    if (window.visualViewport) {
-        window.visualViewport.addEventListener('scroll', lockScroll);
-        window.visualViewport.addEventListener('resize', lockScroll);
-    }
-    document.addEventListener('focusout', function () { setTimeout(function () { lockScroll(); post('unscroll'); }, 60); });
-    document.addEventListener('focusin', function () { setTimeout(function () { lockScroll(); post('unscroll'); }, 300); });
 
     if (!SETTINGS_ONLY) {
         // ── 左上角按钮：返回聊天列表 ──
@@ -157,15 +168,24 @@ window.__mr=window.__mr||{};window.__mr['chatrooms']=3;
             if (t.clientX - sx > 70 && Math.abs(t.clientY - sy) < 60) goBack();
         }, { passive: true });
     } else {
-        // ── 设置模式：所有窗口都关掉了，就回首页 ──
+        // ── 设置模式：所有窗口都关掉了，就回首页；另外永远有一个返回按钮 / 左边缘右滑，不会被困在里面 ──
         var armed = false, closedSince = 0;
         setInterval(function () {
-            if (!window.__roomVisible) { armed = false; closedSince = 0; return; }
-            if (anyModalOpen()) { armed = true; closedSince = 0; return; }
+            if (!window.__roomVisible || !_opened) { armed = false; closedSince = 0; return; }
+            if (anyModalOpen() || getComputedStyle(document.getElementById('settings-modal')).display !== 'none') { armed = true; closedSince = 0; return; }
             if (!armed) return;
             if (!closedSince) closedSince = Date.now();
-            else if (Date.now() - closedSince > 450) { armed = false; closedSince = 0; post('back'); }
+            else if (Date.now() - closedSince > 450) { armed = false; closedSince = 0; _opened = false; post('back'); }
         }, 150);
+        var back = document.createElement('button');
+        back.id = 'so-back';
+        back.innerHTML = '<i class="fas fa-chevron-left"></i>';
+        back.style.cssText = 'position:fixed;left:12px;top:12px;z-index:2147483000;width:40px;height:40px;border:none;border-radius:50%;background:rgba(var(--accent-color-rgb),.9);color:#fff;font-size:15px;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 10px rgba(0,0,0,.25);visibility:visible;';
+        back.addEventListener('click', function () { _opened = false; post('back'); });
+        document.body.appendChild(back);
+        var ssx = 0, ssy = 0, strk = false;
+        document.addEventListener('touchstart', function (e) { var t = e.touches[0]; strk = t.clientX < 22; ssx = t.clientX; ssy = t.clientY; }, { passive: true });
+        document.addEventListener('touchend', function (e) { if (!strk) return; strk = false; var t = e.changedTouches[0]; if (t.clientX - ssx > 70 && Math.abs(t.clientY - ssy) < 60) { _opened = false; post('back'); } }, { passive: true });
     }
 
     // ── 启动完成后：群成员入口只在群聊里显示；告诉首页"准备好了" ──
