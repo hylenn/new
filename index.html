@@ -454,12 +454,12 @@ body { position: fixed; inset: 0; width: 100%; }
         setActive(id);
         if (id !== SETTINGS_ID) { try { await lf.setItem(K.last, id); } catch (e) {} }
         $('rooms-loading-text').textContent = '正在进入 ' + s.name + '…';
-        $('rooms-loading').classList.toggle('show', !f.ready);
+        $('rooms-loading').classList.toggle('show', !f.ready || id === SETTINGS_ID);
         $('rooms-stage').classList.add('open');
         $('rooms-page').classList.add('pushed');
         if (!fromPop) { try { history.pushState({ room: id }, '', '#' + id); } catch (e) {} }
         if (f.ready) post(id, true);
-        else setTimeout(function () { if (openingId === id && !f.ready) { f.ready = true; $('rooms-loading').classList.remove('show'); post(id, true); } }, 9000);
+        else setTimeout(function () { if (openingId === id && !f.ready) { f.ready = true; if (id !== SETTINGS_ID) $('rooms-loading').classList.remove('show'); post(id, true); } }, 9000);
         evictIfNeeded(id);
     }
     function doClose() {
@@ -489,13 +489,15 @@ body { position: fixed; inset: 0; width: 100%; }
             var f = frames[d.id];
             if (f) f.ready = true;
             checkVersions(d.versions || {});
-            if (openingId === d.id) { $('rooms-loading').classList.remove('show'); if (activeId === d.id) post(d.id, true); }
+            if (openingId === d.id) { if (d.id !== SETTINGS_ID) $('rooms-loading').classList.remove('show'); if (activeId === d.id) post(d.id, true); }
         } else if (d.type === 'room-meta') renderList();
         else if (d.type === 'room-ready-versions') {}
         else if (d.type === 'shared-changed') {
             Object.keys(frames).forEach(function (k) { if (k !== d.id) frames[k].stale = true; });
             applyTheme();
-        } else if (d.type === 'unscroll') resetShellScroll();
+        } else if (d.type === 'unscroll') { resetShellScroll(); syncViewport(); }
+        else if (d.type === 'settings-opened') { clearTimeout(settingsTimer); $('rooms-loading').classList.remove('show'); }
+        else if (d.type === 'settings-failed') showSettingsError(d.reason);
     });
 
     /* ───────── 新建 ───────── */
@@ -667,6 +669,14 @@ body { position: fixed; inset: 0; width: 100%; }
         } catch (e) {}
     }
     // 首页「设置」：用一个隐藏的专用页面显示全聊天室共用的设置
+    var settingsTimer = null;
+    function showSettingsError(reason) {
+        var box = $('rooms-loading');
+        $('rooms-loading-text').innerHTML = '设置没有打开<br><span style="font-size:11px;opacity:.7;">' + esc(reason || '页面载入失败或太慢') + '</span><br><button class="rp-btn primary" id="rp-settings-back" style="margin-top:14px;padding:10px 26px;flex:none;">返回</button>';
+        box.classList.add('show');
+        var b = $('rp-settings-back');
+        if (b) b.onclick = function () { box.classList.remove('show'); closeRoom(); };
+    }
     async function openSettings() {
         var list = await readList();
         if (!list.some(function (x) { return x.id === SETTINGS_ID; })) {
@@ -676,9 +686,11 @@ body { position: fixed; inset: 0; width: 100%; }
             await lf.setItem(APP + SETTINGS_ID + '_chatMessages', []);
         }
         listCache = list;
+        clearTimeout(settingsTimer);
+        settingsTimer = setTimeout(function () { if (activeId === SETTINGS_ID) showSettingsError('等了 12 秒还没有打开：可能页面还在载入，或有文件不是最新版'); }, 12000);
         openRoom(SETTINGS_ID);
     }
-    var NEED = { 'core': 3, 'app': 3, 'onboarding': 3, 'listeners': 3, 'group-chat': 3, 'chatrooms': 3, 'backup-engine': 3, 'app-html': 3 };
+    var NEED = { 'core': 3, 'app': 3, 'onboarding': 3, 'listeners': 3, 'group-chat': 3, 'chatrooms': 4, 'backup-engine': 3, 'app-html': 3 };
     var FILE = { 'core': 'js/core.js', 'app': 'js/app.js', 'onboarding': 'js/onboarding.js', 'listeners': 'js/listeners.js', 'group-chat': 'js/features/group-chat.js', 'chatrooms': 'js/features/chatrooms.js', 'backup-engine': 'js/backup-engine.js', 'app-html': 'app.html' };
     function checkVersions(v) {
         var old = Object.keys(NEED).filter(function (k) { return !(v && v[k] >= NEED[k]); });
@@ -688,11 +700,24 @@ body { position: fixed; inset: 0; width: 100%; }
         box.style.display = 'block';
     }
     function resetShellScroll() {
-        window.scrollTo(0, 0);
         ['rooms-app', 'rooms-page', 'rooms-stage'].forEach(function (id) { var e = $(id); if (e) { e.scrollTop = 0; e.scrollLeft = 0; } });
     }
-    window.addEventListener('scroll', resetShellScroll, { passive: true });
-    if (window.visualViewport) { window.visualViewport.addEventListener('scroll', resetShellScroll); window.visualViewport.addEventListener('resize', resetShellScroll); }
+    // 键盘弹出时：iOS 只缩小"可视区域"，不缩小页面。让整个应用跟着可视区域缩放并贴在它上面，
+    // 聊天室里的输入框就会停在键盘上方，顶栏也不会被推走
+    function syncViewport() {
+        var vv = window.visualViewport, app = $('rooms-app');
+        if (!vv || !app) return;
+        var full = Math.abs(vv.height - window.innerHeight) < 2 && Math.abs(vv.offsetTop) < 2;
+        if (full) { app.style.top = ''; app.style.bottom = ''; app.style.height = ''; return; }
+        app.style.top = Math.max(0, vv.offsetTop) + 'px';
+        app.style.bottom = 'auto';
+        app.style.height = vv.height + 'px';
+    }
+    if (window.visualViewport) {
+        window.visualViewport.addEventListener('resize', syncViewport);
+        window.visualViewport.addEventListener('scroll', syncViewport);
+    }
+    window.addEventListener('orientationchange', function () { setTimeout(syncViewport, 300); });
     ['rooms-app', 'rooms-page', 'rooms-stage'].forEach(function (id) { var e = $(id); if (e) e.addEventListener('scroll', resetShellScroll, { passive: true }); });
 
     async function boot() {
